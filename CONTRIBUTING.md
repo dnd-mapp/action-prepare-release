@@ -42,6 +42,7 @@ The action lives in `action.yaml` at the repository root, so consumers reference
 | Path                                     | Purpose                                                                                            |
 |:-----------------------------------------|:---------------------------------------------------------------------------------------------------|
 | `action.yaml`                            | Prepares the release and opens its pull request                                                    |
+| `scripts/annotate.sh`                    | Turns failures into error annotations, for the steps of the action to source                       |
 | `renovate.json`                          | The Renovate config of this repository, which extends the shared preset `dnd-mapp/renovate-config` |
 | `.github/actions/ci/action.yaml`         | The checks that the pull request, push, and release workflows run                                  |
 | `.github/workflows/prepare-release.yaml` | Opens the release pull requests of this repository, using the action from the checkout             |
@@ -53,6 +54,8 @@ The action lives in `action.yaml` at the repository root, so consumers reference
 Keep the action to its one purpose: opening the release pull request. Tagging, staging the package, and creating the GitHub Release stay out of this action.
 
 Run every step that can fail for a fixable reason before the action writes anything to the repository. Commit only through the GraphQL `createCommitOnBranch` mutation, because GitHub signs those commits and the rulesets require signed commits.
+
+Report every failure as an error annotation, so the run summary shows why the action failed. Each step sources `scripts/annotate.sh`. Run commands that can fail with `run_annotated`, which turns their error output into one annotation, and report your own checks with `annotate_error`. Call pnpm with `--silent`, so only the output of the command ends up in the annotation.
 
 Pass inputs and outputs into `run` steps through `env`, and read them as shell variables. Never interpolate `${{ }}` expressions into a script, because a value with quotes or spaces would break or change the command.
 

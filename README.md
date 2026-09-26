@@ -41,6 +41,8 @@ Run it after the dependencies are installed.
 6. Commits the changelog and the manifest to the branch with the GraphQL `createCommitOnBranch` mutation. GitHub signs a commit made this way, so it passes a rule that requires signed commits. If the commit fails, the action deletes the branch again.
 7. Opens the `chore: release X.Y.Z` pull request with the release notes as its body, and turns on auto-merge with a merge commit. Auto-merge is pinned to the release commit, and the action never merges the pull request itself.
 
+When a step fails, the action reports why as an error annotation, so the reason shows in the summary of the run without opening the log.
+
 ## Inputs
 
 | Input         | Default        | Description                                                                           |

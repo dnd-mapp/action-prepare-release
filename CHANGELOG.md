@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- A failure is reported as an error annotation with the error output of the failed command, so the summary of the run shows why the action failed.
+
 ## [1.0.0] - 2026-09-26
 
 ### Added
