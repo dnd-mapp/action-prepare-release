@@ -1,0 +1,145 @@
+name: Prepare release
+description: Opens the pull request of the next release, with the changelog and package.json prepared by changelog release
+
+inputs:
+    bump:
+        description: Part of the version to bump, one of major, minor, or patch
+        required: true
+    client-id:
+        description: Client ID of the GitHub App that creates the branch, the commit, and the pull request
+        required: true
+    private-key:
+        description: Private key of the GitHub App
+        required: true
+    changelog:
+        description: Path to the changelog, relative to the repository root
+        required: false
+        default: CHANGELOG.md
+    manifest:
+        description: Path to the package manifest, relative to the repository root
+        required: false
+        default: package.json
+    base-branch:
+        description: Branch that the release pull request targets, and whose head must be checked out
+        required: false
+        default: main
+
+outputs:
+    version:
+        description: The version of the release, without the leading v
+        value: ${{ steps.prepare.outputs.version }}
+    pull-request-url:
+        description: URL of the release pull request
+        value: ${{ steps.pull-request.outputs.url }}
+
+runs:
+    using: composite
+    steps:
+        - name: Check the checked out commit
+          id: base
+          shell: bash
+          env:
+              BASE_BRANCH: ${{ inputs.base-branch }}
+          run: |
+              base_sha=$(git rev-parse HEAD)
+              head_sha=$(git ls-remote --exit-code origin "refs/heads/$BASE_BRANCH" | cut -f1)
+
+              if [ "$base_sha" != "$head_sha" ]; then
+                  echo "::error::The checked out commit $base_sha is not the head of $BASE_BRANCH, which is $head_sha"
+                  exit 1
+              fi
+              echo "sha=$base_sha" >> "$GITHUB_OUTPUT"
+
+        - name: Prepare the changelog and the manifest
+          id: prepare
+          shell: bash
+          env:
+              BUMP: ${{ inputs.bump }}
+              CHANGELOG: ${{ inputs.changelog }}
+              MANIFEST: ${{ inputs.manifest }}
+          run: |
+              pnpm exec changelog release --bump "$BUMP" --file "$CHANGELOG" --manifest "$MANIFEST"
+
+              version=$(jq -r .version "$MANIFEST")
+              pnpm exec changelog notes --version "$version" --file "$CHANGELOG" --output "$RUNNER_TEMP/release-notes.md"
+
+              echo "version=$version" >> "$GITHUB_OUTPUT"
+              echo "branch=chore/release-$version" >> "$GITHUB_OUTPUT"
+
+        - name: Create the app token
+          id: token
+          uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+          with:
+              client-id: ${{ inputs.client-id }}
+              private-key: ${{ inputs.private-key }}
+              permission-contents: write
+              permission-pull-requests: write
+
+        - name: Commit the release on a new branch
+          id: commit
+          shell: bash
+          env:
+              GH_TOKEN: ${{ steps.token.outputs.token }}
+              BASE_SHA: ${{ steps.base.outputs.sha }}
+              VERSION: ${{ steps.prepare.outputs.version }}
+              BRANCH: ${{ steps.prepare.outputs.branch }}
+              CHANGELOG: ${{ inputs.changelog }}
+              MANIFEST: ${{ inputs.manifest }}
+          run: |
+              if gh api --silent "repos/$GITHUB_REPOSITORY/git/ref/heads/$BRANCH" 2> /dev/null; then
+                  echo "::error::The branch $BRANCH already exists. Close its pull request and delete the branch before you prepare $VERSION again."
+                  exit 1
+              fi
+              gh api --silent "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/heads/$BRANCH" -f "sha=$BASE_SHA"
+
+              # createCommitOnBranch commits through the API, so GitHub signs the commit.
+              if ! commit_sha=$(jq -n \
+                  --arg repository "$GITHUB_REPOSITORY" \
+                  --arg branch "$BRANCH" \
+                  --arg head "$BASE_SHA" \
+                  --arg headline "chore: release $VERSION" \
+                  --arg changelog "${CHANGELOG#./}" \
+                  --arg changelogContents "$(base64 -w 0 "$CHANGELOG")" \
+                  --arg manifest "${MANIFEST#./}" \
+                  --arg manifestContents "$(base64 -w 0 "$MANIFEST")" \
+                  '{
+                      query: "mutation ($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } } }",
+                      variables: {
+                          input: {
+                              branch: { repositoryNameWithOwner: $repository, branchName: $branch },
+                              expectedHeadOid: $head,
+                              message: { headline: $headline },
+                              fileChanges: {
+                                  additions: [
+                                      { path: $changelog, contents: $changelogContents },
+                                      { path: $manifest, contents: $manifestContents }
+                                  ]
+                              }
+                          }
+                      }
+                  }' | gh api graphql --input - --jq .data.createCommitOnBranch.commit.oid); then
+                  gh api --silent -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$BRANCH"
+                  echo "::error::Could not commit the release on $BRANCH, so the branch was deleted again"
+                  exit 1
+              fi
+              echo "sha=$commit_sha" >> "$GITHUB_OUTPUT"
+
+        - name: Open the pull request
+          id: pull-request
+          shell: bash
+          env:
+              GH_TOKEN: ${{ steps.token.outputs.token }}
+              VERSION: ${{ steps.prepare.outputs.version }}
+              BRANCH: ${{ steps.prepare.outputs.branch }}
+              COMMIT_SHA: ${{ steps.commit.outputs.sha }}
+              BASE_BRANCH: ${{ inputs.base-branch }}
+          run: |
+              url=$(gh pr create --repo "$GITHUB_REPOSITORY" --base "$BASE_BRANCH" --head "$BRANCH" --title "chore: release $VERSION" --body-file "$RUNNER_TEMP/release-notes.md")
+              echo "url=$url" >> "$GITHUB_OUTPUT"
+              echo "Opened [chore: release $VERSION]($url)." >> "$GITHUB_STEP_SUMMARY"
+
+              # Unlike gh pr merge --auto, the mutation never merges a pull request that could merge right away.
+              gh api graphql --silent \
+                  -f query='mutation ($id: ID!, $head: GitObjectID!) { enablePullRequestAutoMerge(input: { pullRequestId: $id, mergeMethod: MERGE, expectedHeadOid: $head }) { clientMutationId } }' \
+                  -f id="$(gh pr view "$url" --json id --jq .id)" \
+                  -f head="$COMMIT_SHA"
