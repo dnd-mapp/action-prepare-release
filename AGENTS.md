@@ -6,6 +6,7 @@ This repository is the composite GitHub Action `dnd-mapp/action-prepare-release`
 
 - Keep the action to opening the release pull request. Tagging, staging the package, and creating the GitHub Release belong elsewhere.
 - Commit through the GraphQL `createCommitOnBranch` mutation, never with `git push`, so GitHub signs the commit for the signed-commits rule.
+- Report every failure as an error annotation, with `run_annotated` or `annotate_error` from `scripts/annotate.sh`, so the run summary shows why the action failed.
 - Pass inputs and step outputs into `run` scripts through `env`, and read them as shell variables. A `${{ }}` expression belongs in an `env` value, never inside the script.
 - Treat the input and output names and their defaults as a contract. When you change one, update `action.yaml`, the README tables, and the changelog in the same commit, and mark the change as breaking.
 - Pin every third-party action to a commit SHA and note the version in a comment.

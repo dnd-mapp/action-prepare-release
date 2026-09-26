@@ -41,11 +41,18 @@ runs:
           env:
               BASE_BRANCH: ${{ inputs.base-branch }}
           run: |
-              base_sha=$(git rev-parse HEAD)
-              head_sha=$(git ls-remote --exit-code origin "refs/heads/$BASE_BRANCH" | cut -f1)
+              source "$GITHUB_ACTION_PATH/scripts/annotate.sh"
 
+              base_sha=$(git rev-parse HEAD)
+              remote_ref=$(run_annotated git ls-remote origin "refs/heads/$BASE_BRANCH")
+              head_sha=$(cut -f1 <<< "$remote_ref")
+
+              if [ -z "$head_sha" ]; then
+                  annotate_error "The branch $BASE_BRANCH does not exist on the remote"
+                  exit 1
+              fi
               if [ "$base_sha" != "$head_sha" ]; then
-                  echo "::error::The checked out commit $base_sha is not the head of $BASE_BRANCH, which is $head_sha"
+                  annotate_error "The checked out commit $base_sha is not the head of $BASE_BRANCH, which is $head_sha"
                   exit 1
               fi
               echo "sha=$base_sha" >> "$GITHUB_OUTPUT"
@@ -58,10 +65,12 @@ runs:
               CHANGELOG: ${{ inputs.changelog }}
               MANIFEST: ${{ inputs.manifest }}
           run: |
-              pnpm exec changelog release --bump "$BUMP" --file "$CHANGELOG" --manifest "$MANIFEST"
+              source "$GITHUB_ACTION_PATH/scripts/annotate.sh"
 
-              version=$(jq -r .version "$MANIFEST")
-              pnpm exec changelog notes --version "$version" --file "$CHANGELOG" --output "$RUNNER_TEMP/release-notes.md"
+              run_annotated pnpm --silent exec changelog release --bump "$BUMP" --file "$CHANGELOG" --manifest "$MANIFEST"
+
+              version=$(run_annotated jq -r .version "$MANIFEST")
+              run_annotated pnpm --silent exec changelog notes --version "$version" --file "$CHANGELOG" --output "$RUNNER_TEMP/release-notes.md"
 
               echo "version=$version" >> "$GITHUB_OUTPUT"
               echo "branch=chore/release-$version" >> "$GITHUB_OUTPUT"
@@ -86,11 +95,13 @@ runs:
               CHANGELOG: ${{ inputs.changelog }}
               MANIFEST: ${{ inputs.manifest }}
           run: |
+              source "$GITHUB_ACTION_PATH/scripts/annotate.sh"
+
               if gh api --silent "repos/$GITHUB_REPOSITORY/git/ref/heads/$BRANCH" 2> /dev/null; then
-                  echo "::error::The branch $BRANCH already exists. Close its pull request and delete the branch before you prepare $VERSION again."
+                  annotate_error "The branch $BRANCH already exists. Close its pull request and delete the branch before you prepare $VERSION again."
                   exit 1
               fi
-              gh api --silent "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/heads/$BRANCH" -f "sha=$BASE_SHA"
+              run_annotated gh api --silent "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/heads/$BRANCH" -f "sha=$BASE_SHA"
 
               # createCommitOnBranch commits through the API, so GitHub signs the commit.
               if ! commit_sha=$(jq -n \
@@ -117,9 +128,9 @@ runs:
                               }
                           }
                       }
-                  }' | gh api graphql --input - --jq .data.createCommitOnBranch.commit.oid); then
-                  gh api --silent -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$BRANCH"
-                  echo "::error::Could not commit the release on $BRANCH, so the branch was deleted again"
+                  }' | run_annotated gh api graphql --input - --jq .data.createCommitOnBranch.commit.oid); then
+                  run_annotated gh api --silent -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$BRANCH"
+                  annotate_error "Could not commit the release on $BRANCH, so the branch was deleted again"
                   exit 1
               fi
               echo "sha=$commit_sha" >> "$GITHUB_OUTPUT"
@@ -134,12 +145,15 @@ runs:
               COMMIT_SHA: ${{ steps.commit.outputs.sha }}
               BASE_BRANCH: ${{ inputs.base-branch }}
           run: |
-              url=$(gh pr create --repo "$GITHUB_REPOSITORY" --base "$BASE_BRANCH" --head "$BRANCH" --title "chore: release $VERSION" --body-file "$RUNNER_TEMP/release-notes.md")
+              source "$GITHUB_ACTION_PATH/scripts/annotate.sh"
+
+              url=$(run_annotated gh pr create --repo "$GITHUB_REPOSITORY" --base "$BASE_BRANCH" --head "$BRANCH" --title "chore: release $VERSION" --body-file "$RUNNER_TEMP/release-notes.md")
               echo "url=$url" >> "$GITHUB_OUTPUT"
               echo "Opened [chore: release $VERSION]($url)." >> "$GITHUB_STEP_SUMMARY"
 
               # Unlike gh pr merge --auto, the mutation never merges a pull request that could merge right away.
-              gh api graphql --silent \
+              pr_id=$(run_annotated gh pr view "$url" --json id --jq .id)
+              run_annotated gh api graphql --silent \
                   -f query='mutation ($id: ID!, $head: GitObjectID!) { enablePullRequestAutoMerge(input: { pullRequestId: $id, mergeMethod: MERGE, expectedHeadOid: $head }) { clientMutationId } }' \
-                  -f id="$(gh pr view "$url" --json id --jq .id)" \
+                  -f id="$pr_id" \
                   -f head="$COMMIT_SHA"
