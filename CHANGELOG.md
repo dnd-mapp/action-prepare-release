@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-26
+
 ### Added
 
 - A failure is reported as an error annotation with the error output of the failed command, so the summary of the run shows why the action failed.
@@ -16,5 +18,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - The action. It checks that the head of the base branch is checked out, prepares the release with `changelog release`, and commits the changelog and the manifest to a `chore/release-X.Y.Z` branch through the API with a GitHub App token. It then opens the `chore: release X.Y.Z` pull request with the release notes as its body, and turns on auto-merge. It outputs `version` and `pull-request-url`.
 
-[Unreleased]: https://github.com/dnd-mapp/action-prepare-release/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/dnd-mapp/action-prepare-release/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/dnd-mapp/action-prepare-release/releases/tag/v1.1.0
 [1.0.0]: https://github.com/dnd-mapp/action-prepare-release/releases/tag/v1.0.0
