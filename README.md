@@ -111,7 +111,7 @@ jobs:
                   private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
 ```
 
-After the pull request merges, a maintainer creates the annotated tag `vX.Y.Z` on the merge commit and pushes it. That starts the release workflow of the repository.
+After the pull request merges, the `tag` job of the push workflow creates the annotated tag `vX.Y.Z` on the merge commit with [`dnd-mapp/action-tag-release`](https://github.com/dnd-mapp/action-tag-release). That starts the release workflow of the repository.
 
 ### Why it looks like this
 
